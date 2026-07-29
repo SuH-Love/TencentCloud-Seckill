@@ -1,0 +1,29 @@
+# 敏感文件
+cookies*.json
+
+# 运行时产物
+chrome_profile/
+logs/
+image.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.idea/
+.arts/
+.codeartsdoer/
+.merkle-snapshot.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 备份
+*.bak
+*.bak.*
