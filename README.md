@@ -5,7 +5,7 @@
 ## 功能特点
 
 - **httpx 异步 + HTTP/2**：秒杀阶段用 httpx AsyncClient 并发请求，无GIL争用，比 requests+线程快5-20ms/请求
-- **全自动参数获取**：从活动页面 `__NEXT_DATA__` 自动提取所有参数，换活动只改URL和关键词
+- **全自动参数获取**：从活动页面 `__NEXT_DATA__` 自动提取所有参数，换活动只改关键词
 - **x-csrf-token 自动计算**：从 skey Cookie 通过 DJB Hash 算法计算，无需手动抓包
 - **7波提前发射**：T-2.5s~T-0.1s 每500ms一波，共14请求，覆盖时间偏移±1.5s+网络延迟不确定性
 - **预构建请求体**：启动时预序列化为bytes，秒杀时零序列化开销
@@ -31,8 +31,15 @@
 ### 1. 安装依赖
 
 ```bash
-pip install playwright requests httpx[http2] websocket-client
+# 基础依赖（必装）
+pip install requests httpx[http2]
+
+# Playwright 模式依赖
+pip install playwright
 playwright install chromium
+
+# Chrome CDP 模式依赖
+pip install websocket-client
 ```
 
 ### 2. 获取登录 Cookie
@@ -59,13 +66,14 @@ python get_cookies.py --mode cdp   # Chrome CDP
 
 ### 配置参数
 
-编辑 `seckill.py` 顶部的用户配置区（可按需修改以下3项，正常情况下保持默认即可）：
+编辑 `seckill.py` 顶部的用户配置区（可按需修改以下2项，正常情况下保持默认即可）：
 
 ```python
-ACTIVITY_URL = f"https://cloud.tencent.com/act/pro/featured-{__import__('time').strftime('%Y%m')}"  # 活动页地址（自动取当月）
 TARGET_GOODS_KEYWORD = "4核4G"          # 商品关键词，用于自动匹配
 SECKILL_SLOT = "next"                   # "next"=最近一场, "10:00"=指定场次
 ```
+
+`ACTIVITY_URL` 已自动取当月，无需手动修改。
 
 ### 地域优先级配置
 
@@ -144,7 +152,7 @@ python seckill.py --dry-run
 |--------|----------|-----------|------|
 | >60s | 30秒 | 1 | 远距离，低频 |
 | 30-60s | 5秒 | 1 | 中距离 |
-| 10-30s | 5秒 | 3* | 近距离，3样本取中位数 |
+| 10-30s | 5秒 | 3 | 近距离，3样本取中位数 |
 | <10s | 2秒 | 1 | 倒计时，1样本避免消耗限频配额 |
 | 提前发射期间 | 不同步 | - | 纯缓存偏移，零网络请求 |
 
@@ -225,7 +233,7 @@ PREBUILT_BODIES[region_id] = json.dumps(request_data).encode("utf-8")
 ```
 hash = 5381
 for ch in skey:
-    hash = (hash << 5 + hash) + ord(ch)
+    hash = ((hash << 5) + hash) + ord(ch)
 x-csrf-token = str(hash & 0x7FFFFFFF)
 ```
 
