@@ -4,7 +4,6 @@ cookies*.json
 # 运行时产物
 chrome_profile/
 logs/
-image.png
 
 # Python
 __pycache__/
