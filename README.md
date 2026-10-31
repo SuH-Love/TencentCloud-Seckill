@@ -95,7 +95,7 @@ python get_cookies.py --mode cdp   # Chrome CDP
 
 扫码登录腾讯云后按回车，Cookie 自动保存到 `cookies.json`。
 
-> **活动入口不用跟着改**。`get_cookies.py` 里的 `ACTIVITY_URL` 只用于让 act 域下发 `qcact_fingerprint`（act-api 风控指纹），与抢哪个活动无关——实测任何 `/act/*` 路径（连已下线的 404 页面）都会下发该指纹。入口彻底失效时会自动退到活动聚合页 `https://cloud.tencent.com/act`，仍拿不到则打印告警但仍保存 Cookie。登录必需的 `skey` / `uin` / `tinyid` 来自登录页，与活动入口无关。
+> **活动入口固定为 `https://cloud.tencent.com/act`，不用跟着活动改**。它只用于让 act 域下发 `qcact_fingerprint`（act-api 风控指纹）——实测任何 `/act/*` 路径（连已下线的 404 页面）都会下发该指纹，所以入口更替不影响取 Cookie；万一拿不到就打印告警，但 Cookie 照常保存。登录必需的 `skey` / `uin` / `tinyid` 来自登录页，与此无关。
 
 ## 使用方法
 
@@ -350,7 +350,7 @@ A: 先关闭所有 Chrome 窗口后重试。
 | v7.8 | 横幅「资格」行改为状态式表达（✅ 已确认 / ❓ 待确认）并附判据提示；「门槛」行精简为只陈述条件，消除重复 |
 | v7.9 | 新增 `BUY_REGIONS` 地域限定（留空=全抢，书写顺序即出手顺序）。此前 `PREFERRED_REGIONS` 只排序不过滤，设单地域仍会打全部地域；名字写错启动即报错并列出可选地域；波次计划数与日志请求数改按筛选后地域数计算 |
 | v7.9.1 | 仅文档与依赖清单，脚本无改动：修正安装说明（Python 3.10+、`httpx[http2]` 必须带 extra、`playwright install chromium` 无效应装 Chrome、CDP 模式仅自动探测 Windows）；新增 `requirements.txt` 与 `.gitattributes`（统一 LF） |
-| v7.9.2 | `get_cookies.py` 活动入口容错：不再要求与 `seckill.py` 的入口手动同步，导航后按 `qcact_fingerprint` 是否下发判断成败，失败退到 `/act` 聚合页，仍失败则告警但继续保存 Cookie；修正原先把超时误报为「页面跳转被重定向」的提示 |
+| v7.9.2 | `get_cookies.py` 活动入口固定为聚合页 `https://cloud.tencent.com/act`，不再要求与 `seckill.py` 的入口手动同步（该页只用于触发 `qcact_fingerprint`，且实测任何 `/act/*` 路径都会下发）；补指纹缺失告警；修正原先把超时误报为「页面跳转被重定向」的提示 |
 
 ## 免责声明
 

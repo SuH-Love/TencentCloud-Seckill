@@ -16,10 +16,9 @@ import argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # 活动入口只用来让 act 域下发 qcact_fingerprint（act-api 风控指纹），与 seckill.py 抢哪个活动无关。
-# 实测 /act/* 下任意路径（含已下线的 404 页面）都会下发该指纹，所以入口更替不影响取 Cookie；
-# 只有整站跳走或换域名才需要兜底，此时退到活动聚合页。
-ACTIVITY_URL = "https://cloud.tencent.com/act/pro/double11-202611"
-ACTIVITY_FALLBACK_URL = "https://cloud.tencent.com/act"
+# 聚合页 /act 自带秒杀模块且长期有效（实测任何 /act/* 路径都下发该指纹，包括已下线的 404 页），
+# 所以固定用它，不需要跟着活动更替去改。
+ACTIVITY_URL = "https://cloud.tencent.com/act"
 FINGERPRINT_COOKIE = "qcact_fingerprint"
 COOKIES_PATH = os.path.join(SCRIPT_DIR, "cookies.json")
 REQUIRED_COOKIES = ["skey", "uin", "tinyid"]
@@ -111,17 +110,12 @@ def get_cookies_playwright():
         input()
 
         print("正在导航到活动页面以补全活动域Cookie...")
-        for url in (ACTIVITY_URL, ACTIVITY_FALLBACK_URL):
-            try:
-                page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            except Exception as e:
-                print(f"  {url} 打开失败（{type(e).__name__}），换下一个入口")
-                continue
-            time.sleep(3)
-            if has_act_fingerprint(context.cookies()):
-                print(f"  活动域Cookie已就绪（入口 {url}）")
-                break
-        else:
+        try:
+            page.goto(ACTIVITY_URL, timeout=30000, wait_until="domcontentloaded")
+        except Exception as e:
+            print(f"  打开活动页失败（{type(e).__name__}），继续获取已有Cookie")
+        time.sleep(3)
+        if not has_act_fingerprint(context.cookies()):
             warn_missing_fingerprint()
 
         print("正在保存Cookie...")
@@ -281,21 +275,15 @@ def get_cookies_cdp():
 
     ws = websocket.create_connection(ws_url)
 
-    cookies_raw = []
-    for i, url in enumerate((ACTIVITY_URL, ACTIVITY_FALLBACK_URL)):
-        try:
-            _cdp_navigate(ws, url, msg_id=10 + i)
-            time.sleep(3 if i == 0 else 2)
-            cookies_raw = _cdp_get_cookies(ws, msg_id=20 + i * 2)
-        except Exception:
-            continue
-        if has_act_fingerprint(cookies_raw):
-            print(f"  活动域Cookie已就绪（入口 {url}）")
-            break
-    else:
+    try:
+        _cdp_navigate(ws, ACTIVITY_URL, msg_id=10)
+        time.sleep(3)
+    except Exception as e:
+        print(f"  打开活动页失败（{type(e).__name__}），继续读取已有Cookie")
+
+    cookies_raw = _cdp_get_cookies(ws, msg_id=20)
+    if not has_act_fingerprint(cookies_raw):
         warn_missing_fingerprint()
-    if not cookies_raw:
-        cookies_raw = _cdp_get_cookies(ws, msg_id=1)
 
     cookies = []
     for c in cookies_raw:
