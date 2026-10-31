@@ -4,7 +4,7 @@
   python get_cookies.py              # 交互式选择获取方式
   python get_cookies.py --mode pw    # Playwright 方式
   python get_cookies.py --mode cdp   # Chrome CDP 方式
-登录后自动保存Cookie到 cookies.json，供 snap_up_server.py 使用
+登录后自动保存Cookie到 cookies.json，供 seckill.py 使用
 """
 
 import json
@@ -14,7 +14,11 @@ import sys
 import subprocess
 import argparse
 
-ACTIVITY_URL = f"https://cloud.tencent.com/act/pro/featured-{time.strftime('%Y%m')}"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# 登录后导航到此页面以补全活动域Cookie（与 seckill.py 的活动入口保持一致；
+# 若 seckill.py 中 ACTIVITY_URLS 更新，此处也应同步更新）
+ACTIVITY_URL = "https://cloud.tencent.com/act/pro/double11-202611"
+COOKIES_PATH = os.path.join(SCRIPT_DIR, "cookies.json")
 REQUIRED_COOKIES = ["skey", "uin", "tinyid"]
 KEY_COOKIE_NAMES = ["skey", "uin", "qcmainCSRFToken", "qcact_fingerprint", "tinyid", "loginType"]
 
@@ -61,10 +65,10 @@ def display_key_cookies(cookies):
 
 
 def save_cookies_to_file(cookies):
-    with open("cookies.json", "w", encoding="utf-8") as f:
+    with open(COOKIES_PATH, "w", encoding="utf-8") as f:
         json.dump(cookies, f, ensure_ascii=False, indent=2)
     tc_count = sum(1 for c in cookies if "tencent.com" in c.get("domain", ""))
-    print(f"已保存 {len(cookies)} 条Cookie到 cookies.json (腾讯云: {tc_count} 条)")
+    print(f"已保存 {len(cookies)} 条Cookie到 {COOKIES_PATH} (腾讯云: {tc_count} 条)")
 
 
 # ===== Playwright 方式 =====
@@ -168,6 +172,24 @@ def start_chrome_debug():
     return None
 
 
+def _recv_until_id(ws, msg_id, timeout=10):
+    """持续读取CDP消息，跳过事件推送，直到收到指定id的响应"""
+    ws.settimeout(timeout)
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            raw = ws.recv()
+            if not raw:
+                continue
+            msg = json.loads(raw)
+            if msg.get("id") == msg_id:
+                return msg
+            # 其他消息（Page.frameStartedLoading等事件）直接跳过
+    except Exception as e:
+        print(f"  等待CDP响应(id={msg_id})超时或异常: {e}")
+    return None
+
+
 def get_cookies_cdp():
     import requests
 
@@ -223,16 +245,23 @@ def get_cookies_cdp():
     try:
         nav_cmd = {"id": 0, "method": "Page.navigate", "params": {"url": ACTIVITY_URL}}
         ws.send(json.dumps(nav_cmd))
-        ws.recv()
+        _recv_until_id(ws, 0, timeout=10)
         time.sleep(3)
     except Exception:
         pass
 
-    cmd = {"id": 1, "method": "Network.getAllCookies", "params": {}}
+    # Storage.getCookies（Network.getAllCookies 已废弃）：不带 browserContextId 时
+    # 返回浏览器全部cookie；在页面会话上调用返回该页面可见的cookie
+    cmd = {"id": 1, "method": "Storage.getCookies", "params": {}}
     ws.send(json.dumps(cmd))
-
-    result = json.loads(ws.recv())
-    cookies_raw = result.get("result", {}).get("cookies", [])
+    result = _recv_until_id(ws, 1, timeout=10)
+    cookies_raw = (result or {}).get("result", {}).get("cookies", [])
+    if not cookies_raw:
+        # 兜底：老版本Chrome不支持Storage.getCookies时回退到Network.getAllCookies
+        cmd = {"id": 2, "method": "Network.getAllCookies", "params": {}}
+        ws.send(json.dumps(cmd))
+        result = _recv_until_id(ws, 2, timeout=10)
+        cookies_raw = (result or {}).get("result", {}).get("cookies", [])
 
     cookies = []
     for c in cookies_raw:
@@ -292,7 +321,7 @@ def main():
         success = get_cookies_cdp()
 
     if success:
-        print("\n登录态验证通过，可以运行 snap_up_server.py")
+        print("\n登录态验证通过，可以运行 seckill.py")
         print("提示: 建议秒杀前10-30分钟重新运行本脚本获取最新Cookie")
     else:
         print("\nCookie获取失败")
