@@ -1,0 +1,9 @@
+# 仓库内统一存 LF，签出也是 LF，避免 Windows 下反复提示 CRLF 转换
+* text=auto eol=lf
+
+# 二进制资源不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.zip binary

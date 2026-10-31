@@ -44,24 +44,36 @@
 
 ## 环境要求
 
-- Python 3.8+
-- Windows / macOS / Linux
+- **Python 3.10+**（实测 3.12 / 3.13）。`requests`、`h2`、`playwright` 的新版本均已要求 3.10+，低于这个版本只能装到旧版本，不建议。
+- 抢购主程序：Windows / macOS / Linux 均可。
+- Cookie 获取的 **CDP 模式目前只自动探测 Windows 的 Chrome 路径**；macOS / Linux 需手动以调试模式启动 Chrome（脚本会打印命令）。
 
 ## 安装步骤
 
 ### 1. 安装依赖
 
 ```bash
-# 基础依赖（必装）
-pip install requests httpx[http2]
-
-# Playwright 模式依赖
-pip install playwright
-playwright install chromium
-
-# Chrome CDP 模式依赖
-pip install websocket-client
+pip install -r requirements.txt
 ```
+
+`requirements.txt` 只含抢购主程序的两个包（`requests`、`httpx[http2]`），Cookie 获取的依赖按下面选用的方式单独装：
+
+```bash
+# 抢购主程序（requirements.txt 已包含）
+pip install requests              # 必需：时间同步、降级通道都用它
+pip install "httpx[http2]"        # 强烈推荐：异步 + HTTP/2 通道
+
+# 获取 Cookie（按使用的方式二选一）
+pip install playwright            # --mode pw
+pip install websocket-client      # --mode cdp（缺失时脚本会自动安装）
+```
+
+四个容易踩的坑：
+
+- **`httpx` 必须带 `[http2]`**。代码里 `httpx.AsyncClient(http2=True)` 是写死的，只执行 `pip install httpx` 会在启动时就抛 `ImportError: Using http2=True, but the 'h2' package is not installed`。
+- **`httpx` 不装也能跑**，会自动降级为 `requests` + 线程池（启动横幅会标注「未装 httpx，已降级」），只是单请求慢 5–20ms。
+- **`playwright install chromium` 对本项目无效**。代码用 `channel="chrome"` 直接调本机 Google Chrome（`playwright install --dry-run chrome` 显示的安装位置是 `<system>`，即不下载、只认系统已有的 Chrome）。所以要装的是**系统 Chrome**，`playwright install chromium` 下的是 Chromium，`channel="chrome"` 不会用它。
+- **Playwright 模式以 `headless=False` 启动**，必须有图形界面；纯命令行服务器上只能走 CDP 模式或手动导出 Cookie。
 
 ### 2. 获取登录 Cookie
 
@@ -281,10 +293,12 @@ monkey-patch `socket.getaddrinfo`，首次解析后永久缓存，秒杀时零 D
 TencentCloud-Seckill/
 ├── seckill.py             # 秒杀主程序
 ├── get_cookies.py         # Cookie 获取脚本（Playwright / Chrome CDP）
-├── cookies.json           # 登录 Cookie 存储
-├── logs/                  # 日志文件目录
+├── requirements.txt       # 依赖清单（pip install -r requirements.txt）
+├── .gitattributes         # 统一行尾为 LF，避免 Windows 反复提示 CRLF
+├── cookies.json           # 登录 Cookie 存储（已 gitignore，不入库）
+├── logs/                  # 日志文件目录（已 gitignore）
 │   └── seckill_*.log      # 每次运行的详细日志（毫秒时间戳，异步写入）
-├── chrome_profile/        # Chrome调试实例的用户数据
+├── chrome_profile/        # Chrome调试实例的用户数据（已 gitignore）
 └── README.md
 ```
 
@@ -333,6 +347,7 @@ A: 先关闭所有 Chrome 窗口后重试。
 | v7.7 | 等待期倒计时改单行原地刷新（33 分钟从 130+ 行降到 1 行），`_ConsoleHandler` 统一擦除状态行杜绝粘连；资格复检静默化；预热去重 |
 | v7.8 | 横幅「资格」行改为状态式表达（✅ 已确认 / ❓ 待确认）并附判据提示；「门槛」行精简为只陈述条件，消除重复 |
 | v7.9 | 新增 `BUY_REGIONS` 地域限定（留空=全抢，书写顺序即出手顺序）。此前 `PREFERRED_REGIONS` 只排序不过滤，设单地域仍会打全部地域；名字写错启动即报错并列出可选地域；波次计划数与日志请求数改按筛选后地域数计算 |
+| v7.9.1 | 仅文档与依赖清单，脚本无改动：修正安装说明（Python 3.10+、`httpx[http2]` 必须带 extra、`playwright install chromium` 无效应装 Chrome、CDP 模式仅自动探测 Windows）；新增 `requirements.txt` 与 `.gitattributes`（统一 LF） |
 
 ## 免责声明
 

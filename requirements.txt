@@ -1,0 +1,11 @@
+# pip install -r requirements.txt
+
+# ---- 抢购主程序 seckill.py ----
+requests>=2.31
+# 强烈推荐：异步 + HTTP/2 通道。不装则自动降级为 requests + 线程池（横幅会标注）。
+# 必须带 [http2]，代码里 http2=True 写死，少了 h2 会启动即抛 ImportError。
+httpx[http2]>=0.27
+
+# ---- Cookie 获取 get_cookies.py，按使用方式二选一 ----
+# playwright>=1.40        # --mode pw：需本机已装 Google Chrome（代码用 channel="chrome"）
+# websocket-client>=1.7   # --mode cdp：缺失时脚本会自动 pip install
