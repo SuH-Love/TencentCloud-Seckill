@@ -15,9 +15,12 @@ import subprocess
 import argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# 登录后导航到此页面以补全活动域Cookie（与 seckill.py 的活动入口保持一致；
-# 若 seckill.py 中 ACTIVITY_URLS 更新，此处也应同步更新）
+# 活动入口只用来让 act 域下发 qcact_fingerprint（act-api 风控指纹），与 seckill.py 抢哪个活动无关。
+# 实测 /act/* 下任意路径（含已下线的 404 页面）都会下发该指纹，所以入口更替不影响取 Cookie；
+# 只有整站跳走或换域名才需要兜底，此时退到活动聚合页。
 ACTIVITY_URL = "https://cloud.tencent.com/act/pro/double11-202611"
+ACTIVITY_FALLBACK_URL = "https://cloud.tencent.com/act"
+FINGERPRINT_COOKIE = "qcact_fingerprint"
 COOKIES_PATH = os.path.join(SCRIPT_DIR, "cookies.json")
 REQUIRED_COOKIES = ["skey", "uin", "tinyid"]
 KEY_COOKIE_NAMES = ["skey", "uin", "qcmainCSRFToken", "qcact_fingerprint", "tinyid", "loginType"]
@@ -71,6 +74,17 @@ def save_cookies_to_file(cookies):
     print(f"已保存 {len(cookies)} 条Cookie到 {COOKIES_PATH} (腾讯云: {tc_count} 条)")
 
 
+def has_act_fingerprint(cookies):
+    """活动域风控指纹是否已下发（pw 的 dict 和 CDP 的原始 dict 都带 name/value）"""
+    return any(c.get("name") == FINGERPRINT_COOKIE and c.get("value") for c in cookies)
+
+
+def warn_missing_fingerprint():
+    print(f"  ⚠️ 未获取到 {FINGERPRINT_COOKIE}（act-api 风控指纹）")
+    print("     登录态与抢购参数不受影响，但秒杀请求可能更易被限频或风控拦截。")
+    print("     可在浏览器手动打开任意腾讯云活动页后重新运行本脚本。")
+
+
 # ===== Playwright 方式 =====
 
 def get_cookies_playwright():
@@ -96,12 +110,19 @@ def get_cookies_playwright():
         print("=" * 50)
         input()
 
-        print("正在导航到活动页面以获取完整Cookie...")
-        try:
-            page.goto(ACTIVITY_URL, timeout=30000, wait_until="domcontentloaded")
-        except Exception:
-            print("  页面跳转被重定向，继续获取Cookie...")
-        time.sleep(3)
+        print("正在导航到活动页面以补全活动域Cookie...")
+        for url in (ACTIVITY_URL, ACTIVITY_FALLBACK_URL):
+            try:
+                page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            except Exception as e:
+                print(f"  {url} 打开失败（{type(e).__name__}），换下一个入口")
+                continue
+            time.sleep(3)
+            if has_act_fingerprint(context.cookies()):
+                print(f"  活动域Cookie已就绪（入口 {url}）")
+                break
+        else:
+            warn_missing_fingerprint()
 
         print("正在保存Cookie...")
         cookies = context.cookies()
@@ -190,6 +211,24 @@ def _recv_until_id(ws, msg_id, timeout=10):
     return None
 
 
+def _cdp_navigate(ws, url, msg_id):
+    ws.send(json.dumps({"id": msg_id, "method": "Page.navigate", "params": {"url": url}}))
+    _recv_until_id(ws, msg_id, timeout=10)
+
+
+def _cdp_get_cookies(ws, msg_id):
+    """取全部cookie：Storage.getCookies 优先，老版本 Chrome 回退 Network.getAllCookies。
+    不带 browserContextId 时返回整个浏览器上下文的 cookie，所以 CDP 模式能拿到历史活动域指纹。"""
+    ws.send(json.dumps({"id": msg_id, "method": "Storage.getCookies", "params": {}}))
+    result = _recv_until_id(ws, msg_id, timeout=10)
+    cookies = (result or {}).get("result", {}).get("cookies", [])
+    if not cookies:
+        ws.send(json.dumps({"id": msg_id + 1, "method": "Network.getAllCookies", "params": {}}))
+        result = _recv_until_id(ws, msg_id + 1, timeout=10)
+        cookies = (result or {}).get("result", {}).get("cookies", [])
+    return cookies
+
+
 def get_cookies_cdp():
     import requests
 
@@ -242,26 +281,21 @@ def get_cookies_cdp():
 
     ws = websocket.create_connection(ws_url)
 
-    try:
-        nav_cmd = {"id": 0, "method": "Page.navigate", "params": {"url": ACTIVITY_URL}}
-        ws.send(json.dumps(nav_cmd))
-        _recv_until_id(ws, 0, timeout=10)
-        time.sleep(3)
-    except Exception:
-        pass
-
-    # Storage.getCookies（Network.getAllCookies 已废弃）：不带 browserContextId 时
-    # 返回浏览器全部cookie；在页面会话上调用返回该页面可见的cookie
-    cmd = {"id": 1, "method": "Storage.getCookies", "params": {}}
-    ws.send(json.dumps(cmd))
-    result = _recv_until_id(ws, 1, timeout=10)
-    cookies_raw = (result or {}).get("result", {}).get("cookies", [])
+    cookies_raw = []
+    for i, url in enumerate((ACTIVITY_URL, ACTIVITY_FALLBACK_URL)):
+        try:
+            _cdp_navigate(ws, url, msg_id=10 + i)
+            time.sleep(3 if i == 0 else 2)
+            cookies_raw = _cdp_get_cookies(ws, msg_id=20 + i * 2)
+        except Exception:
+            continue
+        if has_act_fingerprint(cookies_raw):
+            print(f"  活动域Cookie已就绪（入口 {url}）")
+            break
+    else:
+        warn_missing_fingerprint()
     if not cookies_raw:
-        # 兜底：老版本Chrome不支持Storage.getCookies时回退到Network.getAllCookies
-        cmd = {"id": 2, "method": "Network.getAllCookies", "params": {}}
-        ws.send(json.dumps(cmd))
-        result = _recv_until_id(ws, 2, timeout=10)
-        cookies_raw = (result or {}).get("result", {}).get("cookies", [])
+        cookies_raw = _cdp_get_cookies(ws, msg_id=1)
 
     cookies = []
     for c in cookies_raw:
